@@ -377,9 +377,11 @@ class ExperimentRunner:
     """遍历配置 × 种子，调用 train.run_ga() 执行实验."""
 
     def __init__(self, out_dir: str = "output/auto_exp",
-                 seeds: Optional[List[int]] = None):
+                 seeds: Optional[List[int]] = None,
+                 n_workers: int = 1):
         self.out_dir = out_dir
         self.seeds = seeds or [42, 123, 456]
+        self.n_workers = n_workers
         self.results: List[ConfigResult] = []
         self.start_time: Optional[float] = None
         self.completed = 0
@@ -426,6 +428,7 @@ class ExperimentRunner:
                     label=run_label,
                     out_dir=self.out_dir,
                     keep_elites=False,
+                    n_workers=self.n_workers,
                     **_resolve_run_ga_kwargs(config, seed),
                 )
 
@@ -688,7 +691,9 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
                          seeds: Optional[List[int]] = None,
                          phases_to_run: Optional[List[str]] = None,
                          phase2_top_n: int = 3,
-                         quick: bool = False):
+                         quick: bool = False,
+                         fast: bool = False,
+                         n_workers: int = 1):
     """全自动实验主流程."""
     seeds = seeds or [42, 123, 456]
     phases_to_run = phases_to_run or ["phase1", "phase2", "phase3"]
@@ -697,9 +702,13 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
     if quick:
         seeds = [42]
         print("*** QUICK MODE: 1 seed, 10 gens, 2 configs per phase ***\n")
+    elif fast:
+        seeds = seeds[:2] if len(seeds) > 2 else seeds
+        print(f"*** FAST MODE: {len(seeds)} seeds, Phase1=80gens, Phase2-5=200gens, "
+              f"{n_workers} workers ***\n")
 
     t_total_start = time.time()
-    runner = ExperimentRunner(out_dir=out_dir, seeds=seeds)
+    runner = ExperimentRunner(out_dir=out_dir, seeds=seeds, n_workers=n_workers)
     all_phase_results: Dict[str, List[ConfigResult]] = {}
 
     # ── Phase 1: Broad Grid ──
@@ -710,6 +719,9 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
             cfgs = cfgs[:2]
             for c in cfgs:
                 c.generations = 10
+        elif fast:
+            for c in cfgs:
+                c.generations = 80
         print(f"Phase 1: {len(cfgs)} configs x {len(seeds)} seeds = "
               f"{len(cfgs) * len(seeds)} runs"
               f"{' (~' + str(int(len(cfgs) * len(seeds) * 2.8 / 60)) + 'm)' if not quick else ''}")
@@ -733,6 +745,9 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
             cfgs = cfgs[:2]
             for c in cfgs:
                 c.generations = 10
+        elif fast:
+            for c in cfgs:
+                c.generations = 200
         print(f"\nPhase 2: {len(cfgs)} configs x {len(seeds)} seeds = "
               f"{len(cfgs) * len(seeds)} runs "
               f"(from {len(s2.top_configs)} parent configs)")
@@ -766,6 +781,9 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
             cfgs = cfgs[:2]
             for c in cfgs:
                 c.generations = 10
+        elif fast:
+            for c in cfgs:
+                c.generations = 200
         print(f"\nPhase 3: {len(cfgs)} configs x {len(seeds)} seeds = "
               f"{len(cfgs) * len(seeds)} runs "
               f"(baseline: {s3.best_config.label if s3.best_config else 'N/A'})")
@@ -787,6 +805,9 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
             cfgs = cfgs[:2]
             for c in cfgs:
                 c.generations = 10
+        elif fast:
+            for c in cfgs:
+                c.generations = 200
         print(f"\nPhase 4: {len(cfgs)} configs x {len(seeds)} seeds = "
               f"{len(cfgs) * len(seeds)} runs "
               f"(base: {s4.base.label if s4.base else 'fallback'})")
@@ -807,6 +828,9 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
             cfgs = cfgs[:2]
             for c in cfgs:
                 c.generations = 10
+        elif fast:
+            for c in cfgs:
+                c.generations = 200
         print(f"\nPhase 5: {len(cfgs)} configs x {len(seeds)} seeds = "
               f"{len(cfgs) * len(seeds)} runs "
               f"(base: {s5.base.label if s5.base else 'fallback'})")
@@ -883,6 +907,10 @@ Examples:
                         help="Top N configs to focus on in Phase 2 (default: 3)")
     parser.add_argument("--quick", action="store_true",
                         help="Quick validation: 1 seed, 10 gens, 2 configs")
+    parser.add_argument("--fast", action="store_true",
+                        help="Fast mode: 2 seeds, reduced gens (Phase1=80, others=200)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of parallel workers (default: 1, sequential)")
 
     args = parser.parse_args()
     phases = ["phase1"] if args.phase1_only else args.phases
@@ -892,4 +920,6 @@ Examples:
         phases_to_run=phases,
         phase2_top_n=args.top_n,
         quick=args.quick,
+        fast=args.fast,
+        n_workers=args.workers,
     )

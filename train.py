@@ -20,6 +20,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from multiprocessing import Pool
 
 import numpy as np
 import pybullet as p
@@ -210,6 +211,71 @@ class Trainer:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Parallel Worker (module-level for pickle)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _sim_worker(args):
+    """在子进程中仿真单个生物，返回 (dna, fitness)."""
+    dna, sim_id, iterations, terrain = args
+    pid = p.connect(p.DIRECT)
+    p.resetSimulation(physicsClientId=pid)
+    p.setPhysicsEngineParameter(enableFileCaching=0, physicsClientId=pid)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=pid)
+    p.setGravity(0, 0, -10, physicsClientId=pid)
+
+    make_arena(arena_size=20)
+    load_mountain(terrain)
+
+    cr = creature.Creature(1)
+    cr.update_dna(dna)
+    cr.set_target_position(PEAK_POS)
+
+    xml_file = f'temp_w{os.getpid()}_{sim_id}.urdf'
+    with open(xml_file, 'w') as f:
+        f.write(cr.to_xml())
+
+    cid = p.loadURDF(xml_file, physicsClientId=pid)
+    p.resetBasePositionAndOrientation(cid, [0, 0, 5], [0, 0, 0, 1], physicsClientId=pid)
+
+    GRACE_STEPS = 200
+    flying_count = 0
+    total_checked = 0
+    out_of_bounds = False
+
+    for step in range(iterations):
+        p.stepSimulation(physicsClientId=pid)
+        if step % 24 == 0:
+            for jid in range(p.getNumJoints(cid, physicsClientId=pid)):
+                m = cr.get_motors()[jid]
+                p.setJointMotorControl2(cid, jid,
+                                        controlMode=p.VELOCITY_CONTROL,
+                                        targetVelocity=m.get_output(),
+                                        force=5, physicsClientId=pid)
+
+        pos, _ = p.getBasePositionAndOrientation(cid, physicsClientId=pid)
+        cr.update_position(pos)
+
+        x, y, z = pos
+        if abs(x) > 9.0 or abs(y) > 9.0:
+            out_of_bounds = True
+            break
+
+        if step >= GRACE_STEPS:
+            total_checked += 1
+            if is_flying(pos):
+                flying_count += 1
+
+    if out_of_bounds:
+        cr.min_dist_to_target = float('inf')
+    elif total_checked > 0 and flying_count / total_checked > 0.5:
+        cr.min_dist_to_target = float('inf')
+
+    fitness = cr.min_dist_to_target
+    p.disconnect(pid)
+    return fitness
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # GA Loop
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -219,7 +285,8 @@ def run_ga(pop_size=10, gene_count=3, generations=300,
            elitism=True, sim_iterations=2400,
            label="train", out_dir="output",
            keep_elites=False, terrain="gaussian",
-           freeze_indices=None, force_motor=None):
+           freeze_indices=None, force_motor=None,
+           n_workers=1):
     """
     运行完整 GA 训练。
 
@@ -246,7 +313,10 @@ def run_ga(pop_size=10, gene_count=3, generations=300,
 
     ensure_terrains()
     pop = population.Population(pop_size=pop_size, gene_count=gene_count)
-    trainer = Trainer(sim_id=0, terrain=terrain)
+    trainer = Trainer(sim_id=0, terrain=terrain) if n_workers <= 1 else None
+
+    # 多进程：在循环外创建一次 Pool，跨代复用
+    pool = Pool(processes=n_workers) if n_workers > 1 else None
 
     history = []
     best_overall_fit = float('inf')
@@ -256,8 +326,15 @@ def run_ga(pop_size=10, gene_count=3, generations=300,
 
     for gen in range(generations):
         # ── 仿真评估 ──
-        for cr in pop.creatures:
-            trainer.simulate(cr, iterations=sim_iterations)
+        if pool is not None:
+            args = [(cr.dna, i, sim_iterations, terrain)
+                    for i, cr in enumerate(pop.creatures)]
+            fitnesses = pool.map(_sim_worker, args)
+            for cr, fit in zip(pop.creatures, fitnesses):
+                cr.min_dist_to_target = fit
+        else:
+            for cr in pop.creatures:
+                trainer.simulate(cr, iterations=sim_iterations)
 
         fits = [cr.get_min_dist_to_target() for cr in pop.creatures]
         links = [len(cr.get_expanded_links()) for cr in pop.creatures]
@@ -348,7 +425,11 @@ def run_ga(pop_size=10, gene_count=3, generations=300,
         genome.Genome.to_csv(best_overall_dna,
                              os.path.join(out_dir, f"best_{label}.csv"))
 
-    p.disconnect(trainer.pid)
+    if pool is not None:
+        pool.close()
+        pool.join()
+    else:
+        p.disconnect(trainer.pid)
 
     print(f"\n{'='*60}")
     print(f"Training complete: {label}")
@@ -416,6 +497,8 @@ Examples:
     p.add_argument("--terrain", type=str, default="gaussian",
                    choices=["gaussian", "pyramid", "rocky"],
                    help="Terrain type (default: gaussian)")
+    p.add_argument("--workers", type=int, default=1,
+                   help="Number of parallel workers (default: 1, sequential)")
     return p.parse_args()
 
 
@@ -435,4 +518,5 @@ if __name__ == "__main__":
         out_dir=args.out,
         keep_elites=args.keep_elites,
         terrain=args.terrain,
+        n_workers=args.workers,
     )
