@@ -7,27 +7,32 @@
 
 | 文件 | 用途 |
 |---|---|
-| `mountain_ga.py` | 主 GA 训练 + MountainSimulation 类 |
-| `genome.py` | 基因组编码/解码/交叉/突变 |
-| `creature.py` | 生物类（从基因构建 URDF） |
+| `train.py` | **[v2.0]** 统一训练入口，300 代默认，CLI 参数化 |
+| `auto_experiment.py` | **[v2.0]** 全自动三阶段参数搜索系统 |
+| `genome.py` | **[v2.0]** 基因组编码/解码/交叉/突变（Bug 已修复） |
+| `creature.py` | **[v2.0]** 生物类 + Motor（Bug 已修复） |
 | `population.py` | 种群管理 + 选择操作 |
 | `simulation.py` | PyBullet 仿真运行器 |
-| `cw-envt.py` | 原始环境 GUI 展示 |
+| `mountain_ga.py` | [v1.0] 原始实验脚本（保留对照） |
+| `run_experiments.py` | [v1.0] 批量实验入口 |
 | `prepare_shapes.py` | 山体 URDF 生成 |
-| `run_experiments.py` | 批量实验入口 |
-| `test_ga.py` / `test_ga_no_threads.py` | GA 测试 |
+| `cw-envt.py` | 原始环境 GUI 展示 |
+| `code_integration.md` | **[v2.0]** 全部核心代码 + 版本标注 |
 
-## GA 关键参数
-- `pop_size`: 种群大小（默认 10）
-- `gene_count`: 基因数量（默认 3）
-- `mutation_rate`: 突变率（默认 0.1）
-- `generations`: 进化代数（默认 100）
-- `elitism`: 精英策略（默认开启）
+## 训练入口
 
-## 实验结果
-CSV 文件格式: `elite_mountain_{实验名}_gen{代数}.csv`
-实验结果图: `experiment_results.png`
-实验数据: `experiment_results.json`
+```bash
+python train.py                              # 默认 300 代
+python train.py --pop 20 --genes 5 --label exp1
+python auto_experiment.py --phase1-only      # Phase1 验证 (~3h)
+python auto_experiment.py                    # 全三阶段 (~11h)
+```
+
+## v2.0 关键改动
+- Motor 振幅现在实际生效
+- point_mutate amount 参数不再硬编码
+- 新增 disconnect 防止 PyBullet 连接泄漏
+- 三阶段自适应实验系统
 
 ## 虚拟环境
 ```powershell

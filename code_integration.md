@@ -10,7 +10,7 @@
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1.0 | 初始 | Baseline 实现，100 代 GA，4 组实验完成 |
-| v2.0 | 2026-07-10 | Bug 修复 + 300 代训练 + train.py 统一入口 |
+| v2.0 | 2026-07-10 | Bug 修复 + 300 代训练 + train.py 统一入口 + auto_experiment.py 五阶段实验 |
 
 ---
 
@@ -19,7 +19,8 @@
 ```
 AI-Mid/
 ├── train.py              ← [v2.0 新增] 统一训练入口
-├── genome.py             ← [v2.0 修改] Bug 修复
+├── auto_experiment.py    ← [v2.0 新增] 五阶段全自动实验系统
+├── genome.py             ← [v2.0 修改] Bug 修复 + 选择性突变 + 马达覆盖
 ├── creature.py           ← [v2.0 修改] Bug 修复
 ├── population.py         ← [v1.0 不变]
 ├── simulation.py         ← [v1.0 不变]
@@ -174,6 +175,34 @@ class Genome():
                 if gene[i] < 0.0:
                     gene[i] = 0.0
         return new_genome
+
+    # ═══ v2.0 NEW: 选择性突变（Phase 4） ═══
+    @staticmethod
+    def selective_point_mutate(genome, rate, amount, frozen_indices=None):
+        """point_mutate 但跳过 frozen_indices 中的基因索引."""
+        frozen = set(frozen_indices or [])
+        new_genome = copy.copy(genome)
+        for gene in new_genome:
+            for i in range(len(gene)):
+                if i in frozen:
+                    continue
+                if random.random() < rate:
+                    gene[i] += amount
+                if gene[i] >= 1.0:
+                    gene[i] = 0.9999
+                if gene[i] < 0.0:
+                    gene[i] = 0.0
+        return new_genome
+
+    # ═══ v2.0 NEW: 马达类型覆盖（Phase 4） ═══
+    @staticmethod
+    def override_motor_type(dna, motor_type):
+        """强制覆盖所有基因的 control-waveform (index 14)."""
+        new_dna = [g.copy() for g in dna]
+        val = 0.2 if motor_type == "PULSE" else 0.8
+        for gene in new_dna:
+            gene[14] = val
+        return new_dna
 
     @staticmethod
     def shrink_mutate(genome, rate):
@@ -721,7 +750,9 @@ def run_ga(pop_size=10, gene_count=3, generations=300,
            mutation_rate=0.1, mut_amount=0.25,
            shrink_rate=0.25, grow_rate=0.1,
            elitism=True, sim_iterations=2400,
-           label="train", out_dir="output"):
+           label="train", out_dir="output",
+           keep_elites=False, terrain="gaussian",
+           freeze_indices=None, force_motor=None):
     os.makedirs(out_dir, exist_ok=True)
     pop = population.Population(pop_size=pop_size, gene_count=gene_count)
     trainer = Trainer(sim_id=0)
@@ -762,10 +793,17 @@ def run_ga(pop_size=10, gene_count=3, generations=300,
             p2_ind = population.Population.select_parent(fit_map)
             dna = genome.Genome.crossover(pop.creatures[p1_ind].dna,
                                           pop.creatures[p2_ind].dna)
-            dna = genome.Genome.point_mutate(dna, rate=mutation_rate,
-                                             amount=mut_amount)
+            if freeze_indices:
+                dna = genome.Genome.selective_point_mutate(
+                    dna, rate=mutation_rate, amount=mut_amount,
+                    frozen_indices=freeze_indices)
+            else:
+                dna = genome.Genome.point_mutate(dna, rate=mutation_rate,
+                                                 amount=mut_amount)
             dna = genome.Genome.shrink_mutate(dna, rate=shrink_rate)
             dna = genome.Genome.grow_mutate(dna, rate=grow_rate)
+            if force_motor:
+                dna = genome.Genome.override_motor_type(dna, force_motor)
             cr = creature.Creature(1)
             cr.update_dna(dna)
             new_creatures.append(cr)
@@ -860,6 +898,21 @@ if __name__ == "__main__":
 | `grow_rate` | 0.1 | 增长突变概率 |
 | `sim_iterations` | 2400 | 仿真步数（240Hz = 10秒） |
 | `elitism` | True | 精英策略开关 |
+| `keep_elites` | False | 每代保存精英 CSV（磁盘开销大） |
+| `terrain` | "gaussian" | 地形类型: gaussian/pyramid/rocky |
+| `freeze_indices` | None | 冻结的基因索引列表（选择性进化） |
+| `force_motor` | None | 强制马达类型: "PULSE"/"SINE" |
+
+## v2.0 新增功能
+
+| 功能 | 文件 | 方法 |
+|------|------|------|
+| 选择性突变 | genome.py | `selective_point_mutate(genome, rate, amount, frozen_indices)` |
+| 马达类型覆盖 | genome.py | `override_motor_type(dna, motor_type)` |
+| 多地形支持 | train.py | `ensure_terrains()`, `load_mountain(terrain)` |
+| 编码方案实验 | auto_experiment.py | `EncodingStrategy` — Phase 4 |
+| 地形对比实验 | auto_experiment.py | `TerrainStrategy` — Phase 5 |
+| 五阶段编排 | auto_experiment.py | `run_auto_experiments()` 支持 phase1-5 |
 
 ## v2.0 Bug 修复清单
 

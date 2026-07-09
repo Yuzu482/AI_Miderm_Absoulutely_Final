@@ -134,6 +134,32 @@ class Genome():
         return new_genome
 
     @staticmethod
+    def selective_point_mutate(genome, rate, amount, frozen_indices=None):
+        """point_mutate 但跳过 frozen_indices 中的基因索引."""
+        frozen = set(frozen_indices or [])
+        new_genome = copy.copy(genome)
+        for gene in new_genome:
+            for i in range(len(gene)):
+                if i in frozen:
+                    continue
+                if random.random() < rate:
+                    gene[i] += amount
+                if gene[i] >= 1.0:
+                    gene[i] = 0.9999
+                if gene[i] < 0.0:
+                    gene[i] = 0.0
+        return new_genome
+
+    @staticmethod
+    def override_motor_type(dna, motor_type):
+        """强制覆盖所有基因的 control-waveform (index 14)."""
+        new_dna = [g.copy() for g in dna]
+        val = 0.2 if motor_type == "PULSE" else 0.8
+        for gene in new_dna:
+            gene[14] = val
+        return new_dna
+
+    @staticmethod
     def shrink_mutate(genome, rate):
         if len(genome) == 1:
             return copy.copy(genome)

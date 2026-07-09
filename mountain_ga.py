@@ -101,6 +101,7 @@ class MountainSimulation:
         GRACE_STEPS = 200
         flying_count = 0
         total_checked = 0
+        out_of_bounds = False
         for step in range(iterations):
             p.stepSimulation(physicsClientId=pid)
             if step % 24 == 0:
@@ -108,12 +109,21 @@ class MountainSimulation:
 
             pos, _ = p.getBasePositionAndOrientation(cid, physicsClientId=pid)
             cr.update_position(pos)
+
+            # 越界检测：防止出生爆炸弹飞 → 卡墙刷分
+            x, y, z = pos
+            if abs(x) > 9.0 or abs(y) > 9.0:
+                out_of_bounds = True
+                break
+
             if step >= GRACE_STEPS:
                 total_checked += 1
                 if is_flying(pos):
                     flying_count += 1
 
-        if total_checked > 0 and flying_count / total_checked > 0.5:
+        if out_of_bounds:
+            cr.min_dist_to_target = float('inf')
+        elif total_checked > 0 and flying_count / total_checked > 0.5:
             cr.min_dist_to_target = float('inf')
 
     def _update_motors(self, cid, cr, pid):

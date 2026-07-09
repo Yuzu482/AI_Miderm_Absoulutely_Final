@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<robot name="terrain">
+  <link name="baseLink">
+    <visual>
+      <geometry><mesh filename="pyramid.obj" scale="1 1 1"/></geometry>
+    </visual>
+    <collision>
+      <geometry><mesh filename="pyramid.obj" scale="1 1 1"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="1"/>
+      <inertia ixx="1" iyy="1" izz="1" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+</robot>

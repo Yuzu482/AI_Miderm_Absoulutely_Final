@@ -1,13 +1,13 @@
 """
 auto_experiment.py — 全自动迭代实验系统 (v2.0)
 ==============================================
-三阶段自适应参数搜索：粗网格 → 聚焦优化 → 消融验证。
+五阶段自适应参数搜索：粗网格 → 聚焦优化 → 消融验证 → 编码方案 → 地形对比。
 输出全套对比图表 + 汇总 JSON，直接用于 Part B 报告。
 
 用法:
-  python auto_experiment.py                      # 全三阶段 (~11h)
+  python auto_experiment.py                      # 全五阶段
   python auto_experiment.py --phase1-only        # 仅 Phase 1 验证 (~3h)
-  python auto_experiment.py --phases phase1 phase3  # 指定阶段
+  python auto_experiment.py --phases phase4 phase5  # 仅编码+地形
   python auto_experiment.py --seeds 42 99 777    # 自定义种子
   python auto_experiment.py --top-n 5            # Phase 2 聚焦 Top 5
 """
@@ -258,6 +258,116 @@ class AblationStrategy:
         return configs
 
 
+class EncodingStrategy:
+    """Phase 4: 编码方案实验 — 马达控制对比 + 选择性进化."""
+
+    def __init__(self):
+        self.base = ParamConfig(
+            label="baseline_ref", pop_size=20, gene_count=3,
+            generations=300, mutation_rate=0.1, mut_amount=0.25,
+            shrink_rate=0.25, grow_rate=0.1, phase="phase4",
+        )
+
+    def update_from_results(self, results: List[ConfigResult]) -> None:
+        sorted_results = sorted(results, key=lambda r: r.mean_best)
+        self.base = sorted_results[0].config
+
+    def generate_configs(self) -> List[ParamConfig]:
+        configs = []
+        # 4.1 马达控制方式
+        for suffix, rationale in [
+            ("motor_pulse", "Force PULSE mode"),
+            ("motor_sine", "Force SINE mode"),
+            ("motor_hybrid", "Hybrid (gene-controlled)"),
+        ]:
+            configs.append(ParamConfig(
+                label=f"P4_{suffix}",
+                pop_size=self.base.pop_size, gene_count=self.base.gene_count,
+                generations=300, mutation_rate=self.base.mutation_rate,
+                mut_amount=self.base.mut_amount,
+                shrink_rate=self.base.shrink_rate,
+                grow_rate=self.base.grow_rate,
+                phase="phase4", rationale=rationale,
+            ))
+        # 4.2 选择性进化
+        for suffix, rationale in [
+            ("body_only", "Evolve body only (freeze control)"),
+            ("control_only", "Evolve control only (freeze body)"),
+            ("both", "Evolve all genes"),
+        ]:
+            configs.append(ParamConfig(
+                label=f"P4_{suffix}",
+                pop_size=self.base.pop_size, gene_count=self.base.gene_count,
+                generations=300, mutation_rate=self.base.mutation_rate,
+                mut_amount=self.base.mut_amount,
+                shrink_rate=self.base.shrink_rate,
+                grow_rate=self.base.grow_rate,
+                phase="phase4", rationale=rationale,
+            ))
+        return configs
+
+
+class TerrainStrategy:
+    """Phase 5: 不同地形对比."""
+
+    def __init__(self):
+        self.base = ParamConfig(
+            label="baseline_ref", pop_size=20, gene_count=3,
+            generations=300, mutation_rate=0.1, mut_amount=0.25,
+            shrink_rate=0.25, grow_rate=0.1, phase="phase5",
+        )
+
+    def update_from_results(self, results: List[ConfigResult]) -> None:
+        sorted_results = sorted(results, key=lambda r: r.mean_best)
+        self.base = sorted_results[0].config
+
+    def generate_configs(self) -> List[ParamConfig]:
+        configs = []
+        for terrain in ["gaussian", "pyramid", "rocky"]:
+            configs.append(ParamConfig(
+                label=f"P5_terrain_{terrain}",
+                pop_size=self.base.pop_size, gene_count=self.base.gene_count,
+                generations=300, mutation_rate=self.base.mutation_rate,
+                mut_amount=self.base.mut_amount,
+                shrink_rate=self.base.shrink_rate,
+                grow_rate=self.base.grow_rate,
+                phase="phase5",
+                rationale=f"Terrain: {terrain}",
+            ))
+        return configs
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Experiment Runner (extended for Phase 4/5 special params)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _resolve_run_ga_kwargs(config: ParamConfig, seed: int) -> dict:
+    """根据 config label 解析 Phase 4/5 的特殊参数."""
+    extra = {}
+    label = config.label
+
+    # Phase 4 — force_motor
+    if "motor_pulse" in label:
+        extra["force_motor"] = "PULSE"
+    elif "motor_sine" in label:
+        extra["force_motor"] = "SINE"
+
+    # Phase 4 — selective evolution
+    if "body_only" in label:
+        extra["freeze_indices"] = [14, 15, 16]
+    elif "control_only" in label:
+        extra["freeze_indices"] = list(range(14))
+
+    # Phase 5 — terrain
+    for t in ["gaussian", "pyramid", "rocky"]:
+        if f"terrain_{t}" in label:
+            extra["terrain"] = t
+            break
+
+    return extra
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Experiment Runner
 # ═══════════════════════════════════════════════════════════════════════════
@@ -316,6 +426,7 @@ class ExperimentRunner:
                     label=run_label,
                     out_dir=self.out_dir,
                     keep_elites=False,
+                    **_resolve_run_ga_kwargs(config, seed),
                 )
 
                 # 读取 run_ga 输出的 JSON
@@ -576,11 +687,16 @@ def print_summary(master: dict):
 def run_auto_experiments(out_dir: str = "output/auto_exp",
                          seeds: Optional[List[int]] = None,
                          phases_to_run: Optional[List[str]] = None,
-                         phase2_top_n: int = 3):
+                         phase2_top_n: int = 3,
+                         quick: bool = False):
     """全自动实验主流程."""
     seeds = seeds or [42, 123, 456]
     phases_to_run = phases_to_run or ["phase1", "phase2", "phase3"]
     os.makedirs(out_dir, exist_ok=True)
+
+    if quick:
+        seeds = [42]
+        print("*** QUICK MODE: 1 seed, 10 gens, 2 configs per phase ***\n")
 
     t_total_start = time.time()
     runner = ExperimentRunner(out_dir=out_dir, seeds=seeds)
@@ -590,8 +706,13 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
     if "phase1" in phases_to_run:
         s1 = BroadGridStrategy()
         cfgs = s1.generate_configs()
+        if quick:
+            cfgs = cfgs[:2]
+            for c in cfgs:
+                c.generations = 10
         print(f"Phase 1: {len(cfgs)} configs x {len(seeds)} seeds = "
-              f"{len(cfgs) * len(seeds)} runs (~{len(cfgs) * len(seeds) * 2.8 / 60:.0f}m)")
+              f"{len(cfgs) * len(seeds)} runs"
+              f"{' (~' + str(int(len(cfgs) * len(seeds) * 2.8 / 60)) + 'm)' if not quick else ''}")
         all_phase_results["phase1"] = runner.run_phase(cfgs, "phase1")
         plot_phase_comparison(all_phase_results["phase1"], "phase1", out_dir)
 
@@ -608,6 +729,10 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
                             rationale="Fallback — no Phase 1 data"),
             ]
         cfgs = s2.generate_configs()
+        if quick:
+            cfgs = cfgs[:2]
+            for c in cfgs:
+                c.generations = 10
         print(f"\nPhase 2: {len(cfgs)} configs x {len(seeds)} seeds = "
               f"{len(cfgs) * len(seeds)} runs "
               f"(from {len(s2.top_configs)} parent configs)")
@@ -637,11 +762,56 @@ def run_auto_experiments(out_dir: str = "output/auto_exp",
                 rationale="Fallback — no prior data",
             )
         cfgs = s3.generate_configs()
+        if quick:
+            cfgs = cfgs[:2]
+            for c in cfgs:
+                c.generations = 10
         print(f"\nPhase 3: {len(cfgs)} configs x {len(seeds)} seeds = "
               f"{len(cfgs) * len(seeds)} runs "
               f"(baseline: {s3.best_config.label if s3.best_config else 'N/A'})")
         all_phase_results["phase3"] = runner.run_phase(cfgs, "phase3")
         plot_phase_comparison(all_phase_results["phase3"], "phase3", out_dir)
+
+        # update all_prior for downstream phases
+        all_prior = []
+        for results in all_phase_results.values():
+            all_prior.extend(results)
+
+    # ── Phase 4: Encoding Experiments ──
+    if "phase4" in phases_to_run:
+        s4 = EncodingStrategy()
+        if all_prior:
+            s4.update_from_results(all_prior)
+        cfgs = s4.generate_configs()
+        if quick:
+            cfgs = cfgs[:2]
+            for c in cfgs:
+                c.generations = 10
+        print(f"\nPhase 4: {len(cfgs)} configs x {len(seeds)} seeds = "
+              f"{len(cfgs) * len(seeds)} runs "
+              f"(base: {s4.base.label if s4.base else 'fallback'})")
+        all_phase_results["phase4"] = runner.run_phase(cfgs, "phase4")
+        plot_phase_comparison(all_phase_results["phase4"], "phase4", out_dir)
+
+        all_prior = []
+        for results in all_phase_results.values():
+            all_prior.extend(results)
+
+    # ── Phase 5: Terrain Comparison ──
+    if "phase5" in phases_to_run:
+        s5 = TerrainStrategy()
+        if all_prior:
+            s5.update_from_results(all_prior)
+        cfgs = s5.generate_configs()
+        if quick:
+            cfgs = cfgs[:2]
+            for c in cfgs:
+                c.generations = 10
+        print(f"\nPhase 5: {len(cfgs)} configs x {len(seeds)} seeds = "
+              f"{len(cfgs) * len(seeds)} runs "
+              f"(base: {s5.base.label if s5.base else 'fallback'})")
+        all_phase_results["phase5"] = runner.run_phase(cfgs, "phase5")
+        plot_phase_comparison(all_phase_results["phase5"], "phase5", out_dir)
 
     # ── Final ──
     t_total = time.time() - t_total_start
@@ -692,11 +862,12 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python auto_experiment.py                         # Full 3-phase run (~11h)
-  python auto_experiment.py --phase1-only            # Quick validation (~3h)
-  python auto_experiment.py --phases phase1 phase3   # Skip Phase 2
-  python auto_experiment.py --top-n 5                # Focus on Top 5 in Phase 2
-  python auto_experiment.py --seeds 42 99            # Custom seeds
+  python auto_experiment.py                              # Full 5-phase run
+  python auto_experiment.py --phase1-only                 # Quick validation (~3h)
+  python auto_experiment.py --phases phase1 phase3        # Skip Phase 2
+  python auto_experiment.py --phases phase4 phase5        # Only encoding + terrain
+  python auto_experiment.py --top-n 5                     # Focus on Top 5 in Phase 2
+  python auto_experiment.py --seeds 42 99                 # Custom seeds
         """)
     parser.add_argument("--out", default="output/auto_exp",
                         help="Output directory (default: output/auto_exp)")
@@ -704,12 +875,14 @@ Examples:
                         default=[42, 123, 456],
                         help="Random seeds (default: 42 123 456)")
     parser.add_argument("--phases", nargs="+",
-                        default=["phase1", "phase2", "phase3"],
-                        help="Phases to run (default: phase1 phase2 phase3)")
+                        default=["phase1", "phase2", "phase3", "phase4", "phase5"],
+                        help="Phases to run (default: phase1 phase2 phase3 phase4 phase5)")
     parser.add_argument("--phase1-only", action="store_true",
                         help="Run only Phase 1 for validation")
     parser.add_argument("--top-n", type=int, default=3,
                         help="Top N configs to focus on in Phase 2 (default: 3)")
+    parser.add_argument("--quick", action="store_true",
+                        help="Quick validation: 1 seed, 10 gens, 2 configs")
 
     args = parser.parse_args()
     phases = ["phase1"] if args.phase1_only else args.phases
@@ -718,4 +891,5 @@ Examples:
         seeds=args.seeds,
         phases_to_run=phases,
         phase2_top_n=args.top_n,
+        quick=args.quick,
     )
