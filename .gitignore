@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PyBullet
+*.log
+
+# Experiment outputs (generated)
+elite_mountain_*.csv
+*.urdf
+!shapes/*.urdf
+
+# Large generated files
+experiment_results.png
+
+# Jupyter
+.ipynb_checkpoints/
