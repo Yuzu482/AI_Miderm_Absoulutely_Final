@@ -215,63 +215,75 @@ class Trainer:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _sim_worker(args):
-    """在子进程中仿真单个生物，返回 (dna, fitness)."""
+    """在子进程中仿真单个生物，返回 fitness."""
     dna, sim_id, iterations, terrain = args
-    pid = p.connect(p.DIRECT)
-    p.resetSimulation(physicsClientId=pid)
-    p.setPhysicsEngineParameter(enableFileCaching=0, physicsClientId=pid)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=pid)
-    p.setGravity(0, 0, -10, physicsClientId=pid)
+    pid = None
+    xml_file = None
+    try:
+        pid = p.connect(p.DIRECT)
+        p.resetSimulation(physicsClientId=pid)
+        p.setPhysicsEngineParameter(enableFileCaching=0, physicsClientId=pid)
+        p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=pid)
+        p.setGravity(0, 0, -10, physicsClientId=pid)
 
-    make_arena(arena_size=20)
-    load_mountain(terrain)
+        make_arena(arena_size=20)
+        load_mountain(terrain)
 
-    cr = creature.Creature(1)
-    cr.update_dna(dna)
-    cr.set_target_position(PEAK_POS)
+        cr = creature.Creature(1)
+        cr.update_dna(dna)
+        cr.set_target_position(PEAK_POS)
 
-    xml_file = f'temp_w{os.getpid()}_{sim_id}.urdf'
-    with open(xml_file, 'w') as f:
-        f.write(cr.to_xml())
+        xml_file = f'temp_w{os.getpid()}_{sim_id}.urdf'
+        with open(xml_file, 'w') as f:
+            f.write(cr.to_xml())
 
-    cid = p.loadURDF(xml_file, physicsClientId=pid)
-    p.resetBasePositionAndOrientation(cid, [0, 0, 5], [0, 0, 0, 1], physicsClientId=pid)
+        cid = p.loadURDF(xml_file, physicsClientId=pid)
+        p.resetBasePositionAndOrientation(cid, [0, 0, 5], [0, 0, 0, 1], physicsClientId=pid)
 
-    GRACE_STEPS = 200
-    flying_count = 0
-    total_checked = 0
-    out_of_bounds = False
+        GRACE_STEPS = 200
+        flying_count = 0
+        total_checked = 0
+        out_of_bounds = False
 
-    for step in range(iterations):
-        p.stepSimulation(physicsClientId=pid)
-        if step % 24 == 0:
-            for jid in range(p.getNumJoints(cid, physicsClientId=pid)):
-                m = cr.get_motors()[jid]
-                p.setJointMotorControl2(cid, jid,
-                                        controlMode=p.VELOCITY_CONTROL,
-                                        targetVelocity=m.get_output(),
-                                        force=5, physicsClientId=pid)
+        for step in range(iterations):
+            p.stepSimulation(physicsClientId=pid)
+            if step % 24 == 0:
+                for jid in range(p.getNumJoints(cid, physicsClientId=pid)):
+                    m = cr.get_motors()[jid]
+                    p.setJointMotorControl2(cid, jid,
+                                            controlMode=p.VELOCITY_CONTROL,
+                                            targetVelocity=m.get_output(),
+                                            force=5, physicsClientId=pid)
 
-        pos, _ = p.getBasePositionAndOrientation(cid, physicsClientId=pid)
-        cr.update_position(pos)
+            pos, _ = p.getBasePositionAndOrientation(cid, physicsClientId=pid)
+            cr.update_position(pos)
 
-        x, y, z = pos
-        if abs(x) > 9.0 or abs(y) > 9.0:
-            out_of_bounds = True
-            break
+            x, y, z = pos
+            if abs(x) > 9.0 or abs(y) > 9.0:
+                out_of_bounds = True
+                break
 
-        if step >= GRACE_STEPS:
-            total_checked += 1
-            if is_flying(pos):
-                flying_count += 1
+            if step >= GRACE_STEPS:
+                total_checked += 1
+                if is_flying(pos):
+                    flying_count += 1
 
-    if out_of_bounds:
-        cr.min_dist_to_target = float('inf')
-    elif total_checked > 0 and flying_count / total_checked > 0.5:
-        cr.min_dist_to_target = float('inf')
+        if out_of_bounds:
+            cr.min_dist_to_target = float('inf')
+        elif total_checked > 0 and flying_count / total_checked > 0.5:
+            cr.min_dist_to_target = float('inf')
 
-    fitness = cr.min_dist_to_target
-    p.disconnect(pid)
+        fitness = cr.min_dist_to_target
+    except Exception:
+        fitness = float('inf')
+    finally:
+        if pid is not None:
+            p.disconnect(pid)
+        if xml_file is not None:
+            try:
+                os.remove(xml_file)
+            except OSError:
+                pass
     return fitness
 
 
