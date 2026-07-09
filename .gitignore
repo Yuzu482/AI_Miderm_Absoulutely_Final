@@ -34,3 +34,9 @@ experiment_results.png
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Training output (v2.0)
+output/
+
+# Temp URDF files
+temp*.urdf

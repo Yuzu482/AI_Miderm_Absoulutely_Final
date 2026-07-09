@@ -22,13 +22,13 @@ class Motor:
         self.phase = (self.phase + self.freq) % (np.pi * 2)
         if self.motor_type == MotorType.PULSE:
             if self.phase < np.pi:
-                output = 1
+                output = self.amp
             else:
-                output = -1
-            
+                output = -self.amp
+
         if self.motor_type == MotorType.SINE:
-            output = np.sin(self.phase)
-        
+            output = self.amp * np.sin(self.phase)
+
         return output 
 
 class Creature:
