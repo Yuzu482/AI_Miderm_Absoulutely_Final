@@ -95,7 +95,7 @@ class MountainSimulation:
             f.write(xml_str)
 
         cid = p.loadURDF(xml_file, physicsClientId=pid)
-        p.resetBasePositionAndOrientation(cid, [0, 0, 5],
+        p.resetBasePositionAndOrientation(cid, [-8, -8, 1],
                                           [0, 0, 0, 1], physicsClientId=pid)
 
         GRACE_STEPS = 200
