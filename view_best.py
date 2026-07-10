@@ -7,7 +7,7 @@ import creature
 import time
 
 # 加载最优 DNA
-dna_path = "output/auto_exp/best_P2_p20_g8_m0.2_a0.4_s0.6_gr0.175_s42.csv"
+dna_path = "output/auto_exp_v2/best_P1_p5_g8_m0.02_a0.05_s0.4_gr0.05_s123.csv"
 dna = genome.Genome.from_csv(dna_path)
 print(f"Loaded DNA: {len(dna)} genes")
 
@@ -60,17 +60,18 @@ xml_file = 'temp_view_best.urdf'
 with open(xml_file, 'w') as f:
     f.write(cr.to_xml())
 cid = p.loadURDF(xml_file, physicsClientId=pid)
-p.resetBasePositionAndOrientation(cid, [-8, -8, 1], [0, 0, 0, 1], physicsClientId=pid)
+p.resetBasePositionAndOrientation(cid, [-8, -8, 3], [0, 0, 0, 1], physicsClientId=pid)
 
 print(f"Creature has {p.getNumJoints(cid, physicsClientId=pid)} joints")
 print("Starting simulation — best fitness was 0.000054 (0.05mm from peak!)")
 print("Press Ctrl+C to stop, or close window.")
 
 # 仿真循环
+SETTLE_STEPS = 200
 step = 0
 while p.isConnected(pid):
     p.stepSimulation(physicsClientId=pid)
-    if step % 24 == 0:
+    if step >= SETTLE_STEPS and step % 24 == 0:
         for jid in range(p.getNumJoints(cid, physicsClientId=pid)):
             m = cr.get_motors()[jid]
             p.setJointMotorControl2(cid, jid, controlMode=p.VELOCITY_CONTROL,

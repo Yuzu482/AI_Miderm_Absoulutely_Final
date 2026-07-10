@@ -95,16 +95,17 @@ class MountainSimulation:
             f.write(xml_str)
 
         cid = p.loadURDF(xml_file, physicsClientId=pid)
-        p.resetBasePositionAndOrientation(cid, [-8, -8, 1],
+        p.resetBasePositionAndOrientation(cid, [-8, -8, 3],
                                           [0, 0, 0, 1], physicsClientId=pid)
 
+        SETTLE_STEPS = 200
         GRACE_STEPS = 200
         flying_count = 0
         total_checked = 0
         out_of_bounds = False
         for step in range(iterations):
             p.stepSimulation(physicsClientId=pid)
-            if step % 24 == 0:
+            if step >= SETTLE_STEPS and step % 24 == 0:
                 self._update_motors(cid, cr, pid)
 
             pos, _ = p.getBasePositionAndOrientation(cid, physicsClientId=pid)

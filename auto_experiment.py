@@ -386,7 +386,39 @@ class ExperimentRunner:
         self.start_time: Optional[float] = None
         self.completed = 0
         self.total = 0
+        self._recent_fits: List[float] = []  # sliding window for checkpoint
         os.makedirs(out_dir, exist_ok=True)
+
+    def _checkpoint(self):
+        """每 30 次运行后检测异常：作弊 / 崩溃 / 异常 fitness."""
+        if len(self._recent_fits) < 5:
+            return
+        arr = np.asarray(self._recent_fits)
+        finite = arr[arr != float('inf')]
+        inf_rate = (len(arr) - len(finite)) / len(arr)
+
+        print(f"\n  [CHECKPOINT] last {len(arr)} runs:")
+        if len(finite) > 0:
+            print(f"    fitness: min={np.min(finite):.4f}  mean={np.mean(finite):.4f}  "
+                  f"median={np.median(finite):.4f}")
+        print(f"    inf rate: {inf_rate:.1%}  ({len(arr) - len(finite)}/{len(arr)} failed)")
+
+        # 可疑检测
+        if len(finite) > 0:
+            suspicious = finite[finite < 0.5]
+            if len(suspicious) > 0:
+                print(f"  !! SUSPICIOUS: {len(suspicious)} runs with fitness < 0.5 "
+                      f"(min={suspicious.min():.5f}) — possible physics exploit!")
+
+        if inf_rate > 0.5:
+            print(f"  !! WARNING: >50% runs failed with inf — check simulation stability")
+
+        if len(finite) > 5:
+            half = len(finite) // 2
+            if np.mean(finite[:half]) > 0 and np.mean(finite[half:]) < np.mean(finite[:half]) * 0.3:
+                print(f"  !! NOTICE: sudden fitness drop in recent runs — possible new cheat strategy")
+
+        self._recent_fits.clear()
 
     def run_phase(self, configs: List[ParamConfig],
                   phase_name: str) -> List[ConfigResult]:
@@ -449,6 +481,11 @@ class ExperimentRunner:
                     total_time_s=run_data.get("total_time_s", 0),
                     history=run_data.get("history", []),
                 ))
+
+                # 每 30 次运行触发 checkpoint
+                self._recent_fits.append(run_data.get("final_best", float("inf")))
+                if self.completed % 30 == 0:
+                    self._checkpoint()
 
             phase_results.append(ConfigResult(config=config, seeds=seed_results))
 

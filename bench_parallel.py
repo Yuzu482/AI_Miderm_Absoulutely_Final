@@ -100,8 +100,9 @@ def _sim_worker(args):
         f.write(cr.to_xml())
 
     cid = p.loadURDF(xml_file, physicsClientId=pid)
-    p.resetBasePositionAndOrientation(cid, [-8, -8, 1], [0, 0, 0, 1], physicsClientId=pid)
+    p.resetBasePositionAndOrientation(cid, [-8, -8, 3], [0, 0, 0, 1], physicsClientId=pid)
 
+    SETTLE_STEPS = 200
     GRACE_STEPS = 200
     flying_count = 0
     total_checked = 0
@@ -109,7 +110,7 @@ def _sim_worker(args):
 
     for step in range(iterations):
         p.stepSimulation(physicsClientId=pid)
-        if step % 24 == 0:
+        if step >= SETTLE_STEPS and step % 24 == 0:
             for jid in range(p.getNumJoints(cid, physicsClientId=pid)):
                 m = cr.get_motors()[jid]
                 p.setJointMotorControl2(cid, jid,
